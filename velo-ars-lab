@@ -1,7 +1,8 @@
 # Author: Vladimir F de Sousa vfrancad@gmail.com
 #
+# Original base code from Jose Moreno - https://github.com/erjosito
 #
-Azure cli script that builds a full blown POC for VMware SD-WAN and ars
+# Azure cli script that builds a full blown POC for VMware SD-WAN and ars
 # builds a green field hub and spoke vnets on Azure
 # Expects an existing VCE edge already configured on VMware SD-WAN Orchestrator
 # Inputs needed - VCO and VCE activation key
