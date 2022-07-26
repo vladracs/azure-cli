@@ -2,9 +2,7 @@
 
 # Sample Azure CLI script that provisions a VMware SD-WAN Edge in Azure Greenfield
 #
-# Original file from: https://github.com/erjosito/azcli/blob/master/velocloud.azcli
-#
-# 2nic VCE version 4.2.1 (nic1 private, nic2 public)
+# Single NIC VCE - GE1 public overlay and NSD from Edge (IPSEC))
 #
 # Variables
 velo1_token=XXXX-XXXX-XXXX-XXXX
