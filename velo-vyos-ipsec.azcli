@@ -1,0 +1,114 @@
+
+
+# Sample Azure CLI script that provisions a VMware SD-WAN Edge in Azure Greenfield
+#
+# Original file from: https://github.com/erjosito/azcli/blob/master/velocloud.azcli
+#
+# 2nic VCE version 4.2.1 (nic1 private, nic2 public)
+#
+# Variables
+velo1_token=XXXX-XXXX-XXXX-XXXX
+vco=vco.velocloud.net
+rg=velocloud
+location=northeurope
+hub_vnet_name=hub
+hub_vnet_prefix=10.2.0.0/24
+hub_velo_subnet_public_name=velopub
+hub_velo_subnet_public_prefix=10.2.0.0/26
+hub_velo_subnet_private_name=velopriv
+hub_velo_subnet_private_prefix=10.2.0.64/26
+
+hub_velo1_name=velo1
+hub_velo1_nic_public_name=velo1nic1
+hub_velo1_nic_private_name=velo1nic2
+hub_velo1_pip_name=velo1pip
+velo_nsg_name=velonsg
+
+velo_publisher=vmware-inc
+velo_offer=sol-42222-bbj
+velo_sku=vmware_sdwan_4x
+velo_version=4.2.1
+velo_ignore_cert_errors='true'
+
+velo_cloudinit=/tmp/velocloudinit.txt
+### using a smaller instance for lab/demo purpose
+### refer to datasheet for production deployment specs
+velo_vm_size=Standard_B2ms
+sshkey=$(cat ~/.ssh/id_rsa.pub)
+keyvault_name=myvault
+velo1_token_secret_name=velocloudtoken1
+velo_vco_secret_name=velovco
+
+# Create RG and VNets
+echo "Creating RG and VNets..."
+az group create -n $rg -l $location -o none
+az network vnet create -n $hub_vnet_name -g $rg --address-prefixes $hub_vnet_prefix --subnet-name $hub_velo_subnet_public_name --subnet-prefixes $hub_velo_subnet_public_prefix -o none
+az network vnet subnet create -g $rg -n $hub_velo_subnet_private_name --vnet-name $hub_vnet_name --address-prefix $hub_velo_subnet_private_prefix -o none
+
+# Create VeloCloud NVA
+echo "Creating public IP, NSG and NICs..."
+az network public-ip create -g $rg -n $hub_velo1_pip_name --sku standard --allocation-method static -o none
+echo "Creating NSGs..."
+az network nsg create -n $velo_nsg_name -g $rg -o none
+az network nsg rule create --nsg-name $velo_nsg_name -g $rg -n VCMP --priority 1000 --destination-port-ranges 2426 --access Allow --protocol Udp -o none
+az network nsg rule create --nsg-name $velo_nsg_name -g $rg -n SSH --priority 1010 --destination-port-ranges 22 --access Allow --protocol Tcp -o none
+echo "Creating NICs..."
+az network nic create -n "$hub_velo1_nic_public_name" -g $rg --vnet-name $hub_vnet_name --subnet $hub_velo_subnet_public_name --public-ip-address "$hub_velo1_pip_name" --ip-forwarding --network-security-group $velo_nsg_name -o none
+
+
+cat <<EOF > $velo_cloudinit
+#cloud-config
+password: Velocloud123
+chpasswd: { expire: False }
+ssh_pwauth: True
+velocloud:
+ vce:
+   management_interface: false
+   vco: $vco
+   activation_code: $velo1_token
+   vco_ignore_cert_errors: $velo_ignore_cert_errors
+EOF
+
+velo_image_urn="${velo_publisher}:${velo_offer}:${velo_sku}:${velo_version}"
+echo "Accepting image terms and creating VM..."
+az vm image terms accept --urn "$velo_image_urn" -o none
+az vm create -n $hub_velo1_name -g $rg -l $location --image "$velo_image_urn" --size $velo_vm_size \
+    --admin-username "vceuser" --admin-password "Velocloud123" --authentication-type password \
+    --nics "$hub_velo1_nic_public_name" -o none \
+    --custom-data $velo_cloudinit
+
+echo "deploying vyos"
+
+# VYOS image parameters
+nva_publisher=sentriumsl
+nva_offer=vyos-1-2-lts-on-azure
+nva_sku=vyos-1-3
+nva_version=latest
+nva_image_urn="${nva_publisher}:${nva_offer}:${nva_sku}:${nva_version}"
+# VYOS Plan
+nva_plan_name=vyos-1-3
+nva_plan_product=vyos-1-2-lts-on-azure
+nva_plan_publisher=sentriumsl
+### using a smaller instance for lab/demo purpose
+nva_vm_size=Standard_B1ls
+
+hub_nva1_name=hub_nva1
+hub_nva1_nic_trust_name=nva1nic2
+hub_nva1_nic_untrust_name=nva1nic1
+hub_nva1_pip_name=nva1pip
+nva_nsg_name=nva_nsg
+
+echo "Creating Public IP"
+az network public-ip create -g $rg -n $hub_nva1_pip_name --sku standard --allocation-method static -o none
+echo "Creating NSG"
+az network nsg create -n $nva_nsg_name -g $rg -o none
+echo "Creating NIC"
+az network nic create -n "$hub_nva1_nic_untrust_name" -g $rg --vnet-name $hub_vnet_name --subnet $hub_velo_subnet_public_name --public-ip-address "$hub_nva1_pip_name" \
+   --ip-forwarding true --network-security-group $nva_nsg_name -o none
+
+echo "Accepting image terms and creating NVAs..."
+az vm image terms accept --urn "$nva_image_urn" -o none
+az vm create -n $hub_nva1_name -g $rg -l $location --image "$nva_image_urn" --size $nva_vm_size \
+    --admin-username "vyosadmin" --admin-password "vyosVMware1!" --authentication-type password \
+    --nics "$hub_nva1_nic_untrust_name" -o none --public-ip-sku Standard \
+    --plan-name $nva_plan_name --plan-product $nva_plan_product --plan-publisher $nva_plan_publisher
