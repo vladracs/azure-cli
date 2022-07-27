@@ -4,6 +4,9 @@
 #
 # Single NIC VCE - GE1 public overlay and NSD from Edge (IPSEC))
 #
+# To be able to work on a single NIC , make sure VCE cloud-init passes the parameter: management_interface: false
+# Also make sure NSGs are allowing IKE (udp 500) and ESP (protocol, or if encpasulated UDP 4500) between VCE and NVA.
+# 
 # Variables
 velo1_token=XXXX-XXXX-XXXX-XXXX
 vco=vco.velocloud.net
