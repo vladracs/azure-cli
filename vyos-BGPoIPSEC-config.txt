@@ -1,0 +1,51 @@
+#sample vyos configuration allowing VMmare SD-WAN Edge to build an IPSEC tunnel to it.
+
+#note that vyos will negotiate a UDP encapsulation of ESP packets , even without NAT being involved 
+# i.e. both VCE and VYOS on same subnet.
+
+set firewall all-ping 'enable'
+set firewall broadcast-ping 'disable'
+set firewall config-trap 'disable'
+set firewall ipv6-receive-redirects 'disable'
+set firewall ipv6-src-route 'disable'
+set firewall ip-src-route 'disable'
+set firewall log-martians 'enable'
+set firewall options interface vti0 adjust-mss '1354'
+set firewall options interface vti1 adjust-mss '1354'
+set firewall receive-redirects 'disable'
+set firewall send-redirects 'enable'
+set firewall source-validation 'disable'
+set firewall syn-cookies 'enable'
+set firewall twa-hazards-protection 'disable'
+
+set interfaces loopback lo
+set interfaces vti vti0 address '192.168.92.1/30'
+set interfaces vti vti0 mtu '1396'
+
+set policy prefix-list all rule 10 action 'permit'
+set policy prefix-list all rule 10 le '32'
+set policy prefix-list all rule 10 prefix '0.0.0.0/0'
+
+set protocols bgp 65092 address-family ipv4-unicast network 192.168.91.0/24
+set protocols bgp 65092 neighbor 192.168.92.2 address-family ipv4-unicast prefix-list export 'all'
+set protocols bgp 65092 neighbor 192.168.92.2 address-family ipv4-unicast prefix-list import 'all'
+set protocols bgp 65092 neighbor 192.168.92.2 remote-as '65090'
+
+set protocols static route 0.0.0.0/0 next-hop 17.0.0.1
+
+
+set vpn ipsec esp-group ipsec-rtr-esp compression 'disable'
+set vpn ipsec esp-group ipsec-rtr-esp lifetime '1800'
+set vpn ipsec esp-group ipsec-rtr-esp mode 'tunnel'
+set vpn ipsec esp-group ipsec-rtr-esp pfs 'enable'
+set vpn ipsec esp-group ipsec-rtr-esp proposal 1 encryption 'aes256'
+set vpn ipsec esp-group ipsec-rtr-esp proposal 1 hash 'sha1'
+
+set vpn ipsec ike-group ipsec-rtr-ike close-action 'none'
+set vpn ipsec ike-group ipsec-rtr-ike ikev2-reauth 'no'
+set vpn ipsec ike-group ipsec-rtr-ike key-exchange 'ikev1'
+set vpn ipsec ike-group ipsec-rtr-ike lifetime '3600'
+set vpn ipsec ike-group ipsec-rtr-ike proposal 1 dh-group '2'
+set vpn ipsec ike-group ipsec-rtr-ike proposal 1 encryption 'aes256'
+set vpn ipsec ike-group ipsec-rtr-ike proposal 1 hash 'sha1'
+set vpn ipsec ipsec-interfaces interface 'eth0'
