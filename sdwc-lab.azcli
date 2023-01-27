@@ -1,0 +1,112 @@
+# Script build a small test lab for the new vmware sd-wan client
+
+rg=SDWC-CENTRALUS
+location=centralUS
+
+####CUSTOMER DC VNET
+hub_vnet_name=hub
+hub_vnet_prefix=10.1.0.0/24
+#CC SUBNET
+hub_subnet_cc_name=sn-cc
+hub_subnet_cc_prefix=10.1.0.0/26
+#SERVER SUBNET
+hub_subnet_srv_name=sn-srv
+hub_subnet_srv_prefix=10.1.0.64/26
+
+#Network Security Group Name
+nsg_name=vms_nsg
+####NPE
+npe_vnet_name=npe
+npe_vnet_prefix=10.1.11.0/24
+npe_subnet_name=sn-npe
+npe_subnet_prefix=10.1.11.0/26
+###Client
+user_vnet_name=user
+user_vnet_prefix=10.1.12.0/24
+user_subnet_name=sn-user
+user_subnet_prefix=10.1.12.0/26
+######## Deploying
+echo "Creating RG"
+az group create -n $rg -l $location -o none
+echo "Creating HUB DC VNET and Subnet"
+az network vnet create -n $hub_vnet_name -g $rg --address-prefixes $hub_vnet_prefix --subnet-name $hub_subnet_cc_name --subnet-prefixes $hub_subnet_cc_prefix -o none
+az network vnet subnet create -g $rg -n $hub_subnet_srv_name --vnet-name $hub_vnet_name --address-prefix $hub_subnet_srv_prefix -o none
+echo "Creating NPE VNET and Subnet"
+az network vnet create -n $npe_vnet_name -g $rg --address-prefixes $npe_vnet_prefix --subnet-name $npe_subnet_name --subnet-prefixes $npe_subnet_prefix -o none
+echo "Creating USER VNET and Subnet"
+az network vnet create -n $user_vnet_name -g $rg --address-prefixes $user_vnet_prefix --subnet-name $user_subnet_name --subnet-prefixes $user_subnet_prefix -o none
+echo "Create Route tables"
+az network route-table create --name rt-cc --resource-group $rg --location $location
+az network vnet subnet update --vnet-name $hub_vnet_name --name $hub_subnet_cc_name --resource-group $rg --route-table rt-cc
+az network route-table create --name rt-srv --resource-group $rg --location $location
+az network vnet subnet update --vnet-name $hub_vnet_name --name $hub_subnet_srv_name --resource-group $rg --route-table rt-srv
+echo "Creating public IP"
+az network public-ip create -g $rg -n "cc-pip" --sku standard --allocation-method static -o none
+az network public-ip create -g $rg -n "srv-pip" --sku standard --allocation-method static -o none
+az network public-ip create -g $rg -n "npe-pip" --sku standard --allocation-method static -o none
+az network public-ip create -g $rg -n "user-pip" --sku standard --allocation-method static -o none
+
+echo "Creating NSG"
+az network nsg create -n $nsg_name -g $rg -o none
+az network nsg rule create --nsg-name $nsg_name -g $rg -n SSH --priority 1010 --destination-port-ranges 22 --access Allow --protocol Tcp -o none
+az network nsg rule create --nsg-name $nsg_name -g $rg -n RDP --priority 1020 --destination-port-ranges 3389 --access Allow --protocol Tcp -o none
+az network nsg rule create --nsg-name $nsg_name -g $rg -n HTTPS-T --priority 1011 --destination-port-ranges 443 --access Allow --protocol Tcp -o none
+az network nsg rule create --nsg-name $nsg_name -g $rg -n HTTPS-U --priority 1012 --destination-port-ranges 443 --access Allow --protocol Udp -o none
+echo "Creating NICs"
+echo "CC NIC"
+az network nic create -n "cc_nic" -g $rg --vnet-name $hub_vnet_name --subnet $hub_subnet_cc_name --public-ip-address "cc-pip" \
+   --ip-forwarding true --network-security-group $nsg_name -o none
+az network nic create -n "srv_nic" -g $rg --vnet-name $hub_vnet_name --subnet $hub_subnet_srv_name --public-ip-address "srv-pip" \
+      --ip-forwarding false --network-security-group $nsg_name -o none
+az network nic create -n "npe-nic" -g $rg --vnet-name $npe_vnet_name --subnet $npe_subnet_name --public-ip-address "npe-pip" \
+   --ip-forwarding false --network-security-group $nsg_name -o none
+az network nic create -n "user-nic" -g $rg --vnet-name $user_vnet_name --subnet $user_subnet_name --public-ip-address "user-pip" \
+   --ip-forwarding false --network-security-group $nsg_name -o none
+
+echo "Creating SDWC CC Linux VM"
+az vm create \
+  --resource-group $rg \
+  --name sdwc-cc2 \
+  --image UbuntuLTS \
+  --admin-username azlinuxadmin \
+  --admin-password azlinuxVMware1! \
+  --nics "cc-nic" \
+  --no-wait
+echo "Creating SRV Linux VM"
+az vm create \
+  --resource-group $rg \
+  --name srv2 \
+  --image UbuntuLTS \
+  --admin-username azlinuxadmin \
+  --admin-password azlinuxVMware1! \
+  --nics "srv-nic" \
+  --no-wait
+echo "Creating SDWC NPE Linux VM"
+az vm create \
+  --resource-group $rg \
+  --name sdwc-npe2 \
+  --image UbuntuLTS \
+  --admin-username azlinuxadmin \
+  --admin-password azlinuxVMware1! \
+  --nics "npe-nic" \
+  --no-wait
+echo "Creating SDWC User Linux VM"
+az vm create \
+  --resource-group $rg \
+  --name sdwc-user2 \
+  --image UbuntuLTS \
+  --admin-username azlinuxadmin \
+  --admin-password azlinuxVMware1! \
+  --nics "user-nic" \
+  --no-wait
+
+# grabing the ip of the CC
+privIP=$(az vm nic show -g $rg --vm-name sdwc-cc2 --nic cc-nic --query "ipConfigurations[0].privateIpAddress" -o tsv)
+
+#Create UDR to point traffic for the overlay network towards CC
+az network route-table route create \
+--resource-group $rg --name RouteToCC \
+--route-table-name rt-srv \
+--address-prefix 10.255.0.0/16 \
+--next-hop-type VirtualAppliance \
+--next-hop-ip-address $privIP
