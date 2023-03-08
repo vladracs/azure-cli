@@ -1,0 +1,45 @@
+# author: vladimir franca de sousa , vfrancadesou@vmware.com
+# original script: https://github.com/mddazure/azure-vwan-microhack
+# Part 2 of the Azure script to deploy a sample VMware SDWAN topology with 2 NVAs and BGP peering with Azure vWAN HUBs
+# part 2 should be used after the vHUB is fully deployed - which can take up to 1 hour.
+# Just a sample lab setup, not to be considered best practices
+
+# Pre-Requisites
+echo validating pre-requisites
+az extension add --name virtual-wan 
+# or updating vWAN CLI extensions
+az extension update --name virtual-wan
+
+# Parameters (make changes based on your requirements)
+
+rg=vmsdwan_vwan
+region1=westeurope
+#VWAN 
+vwanname=vwan-nvabgp
+hub1name=hub1
+#SPOKE LINUX SIZE
+vmsize=Standard_DS1_v2
+#### SDWAN nva parameters
+# Variables
+velo1_actkey=MNGN-AAAB-bbb-cccd
+velo2_actkey=-AAAB-bbb-cccd
+vco=vco12-usvi1.velocloud.net
+#Specific SDWAN BGP settings
+vce1bgp=65011 # Set ASN
+bgp_network1="192.168.0.0/16"
+vce2bgp=65012 # Set ASN
+bgp_network2="192.168.0.0/16"
+
+echo "build nva to vhub peering"
+ # Build SDWAN NVA to vHUB BGP Peering
+ az network vhub bgpconnection create --resource-group $rg \
+ --vhub-name hub1  --name sdwan1  --peer-asn 65011 \
+ --peer-ip $(az network nic show --name sdwan1_nic_private --resource-group $rg --query ipConfigurations[0].privateIpAddress -o tsv) \
+ --vhub-conn $(az network vhub connection show --name sdwanconn --resource-group $rg --vhub-name hub1 --query id -o tsv) \
+ --no-wait
+  # Build SDWAN NVA to vHUB BGP Peering
+ az network vhub bgpconnection create --resource-group $rg \
+ --vhub-name hub1  --name sdwan2  --peer-asn 65012 \
+ --peer-ip $(az network nic show --name sdwan2_nic_private --resource-group $rg --query ipConfigurations[0].privateIpAddress -o tsv) \
+ --vhub-conn $(az network vhub connection show --name sdwanconn --resource-group $rg --vhub-name hub1 --query id -o tsv) \
+ --no-wait
