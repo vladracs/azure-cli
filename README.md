@@ -11,6 +11,7 @@ velo-vyos-ipsec.azcli
 
 
 vWAN setup:
-![Screenshot 2023-03-08 at 19 22 59](https://user-images.githubusercontent.com/76786046/223800504-cb3967a0-83df-4a7c-8ac8-bbe6d66e5506.png)
+![Screenshot 2023-03-08 at 19 24 28](https://user-images.githubusercontent.com/76786046/223801460-419ad9c0-8121-419d-a6ee-939decfc52b3.png)
+
 
 
