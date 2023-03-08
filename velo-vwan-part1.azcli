@@ -1,0 +1,204 @@
+#!/bin/bash
+# author: vladimir franca de sousa , vfrancadesou@vmware.com
+# original script: https://github.com/mddazure/azure-vwan-microhack
+# Azure script to deploy a sample VMware SDWAN topology with 2 NVAs and BGP peering with Azure vWAN HUBs
+# Just a sample lab setup, not to be considered best practices
+
+# Pre-Requisites
+echo validating pre-requisites
+az extension add --name virtual-wan 
+# or updating vWAN CLI extensions
+az extension update --name virtual-wan
+
+# Parameters (make changes based on your requirements)
+
+rg=vmsdwan_vwan
+region1=westeurope
+#VWAN 
+vwanname=vwan-nvabgp
+hub1name=hub1
+#SPOKE LINUX SIZE
+vmsize=Standard_DS1_v2
+#### SDWAN nva parameters
+# Variables
+velo1_actkey=MNGN-AAAB-bbb-cccd
+velo2_actkey=-AAAB-bbb-cccd
+vco=vco12-usvi1.velocloud.net
+#Specific SDWAN BGP settings
+vce1bgp=65011 # Set ASN
+bgp_network1="192.168.0.0/16"
+vce2bgp=65012 # Set ASN
+bgp_network2="192.168.0.0/16"
+
+#USER-PWD FOR ALL VMs (not using ssh keys - not considered best practices)
+username=azadmin
+password="azVelocloud123!Vmware1!" #Please change your password
+
+#VMware SDWAN NVA
+velo_publisher=vmware-inc
+velo_offer=sol-42222-bbj
+velo_sku=vmware_sdwan_4x
+velo_version=4.2.1
+velo_ignore_cert_errors='true'
+velo_nsg_name=velonsg
+velo_cloudinit=/tmp/velocloudinit.txt
+velo_cloudinit2=/tmp/velocloudinit2.txt
+### using a smaller instance for lab/demo purpose
+### refer to datasheet for production deployment specs
+velo_vm_size=Standard_B2ms
+# in this script vce is deployed without ssh keys, and uses user/pwd - not to be considered best practice
+
+NVA VHUB DEPLOY - AZCLI
+######## Deploying
+echo "Creating RG"
+az group create -n $rg -l $region1 -o none
+#Creating vWAN
+echo Creating vwan and both hubs...
+az network vwan create -g $rg -n vwan --branch-to-branch-traffic true --location $region1 --type Standard --output none
+az network vhub create -g $rg --name hub1 --address-prefix 10.2.0.0/24 --vwan vwan --location $region1 --sku Standard --no-wait
+echo "pausing for 30s to allow vwan to be built"
+sleep 30
+
+echo Creating spoke VNETs...
+# Creating spokes virtual network
+# Region1
+az network vnet create --address-prefixes 10.2.1.0/24 -n spoke1 -g $rg -l $region1 --subnet-name main --subnet-prefixes 10.2.1.0/26 --output none
+az network vnet create --address-prefixes 10.2.2.0/24 -n spoke2 -g $rg -l $region1 --subnet-name main --subnet-prefixes 10.2.2.0/26 --output none
+
+echo Creating Spoke VMs...
+# Creating VMs on each indirect spoke.
+az vm create -n spoke1VM  -g $rg --image ubuntults --public-ip-sku Standard --size $vmsize -l $region1 --subnet main --vnet-name spoke1 --admin-username $username --admin-password $password --nsg "" --no-wait
+az vm create -n spoke2VM  -g $rg --image ubuntults --public-ip-sku Standard --size $vmsize -l $region1 --subnet main --vnet-name spoke2 --admin-username $username --admin-password $password --nsg "" --no-wait
+#Enabling boot diagnostics for all VMs in the resource group (Serial console)
+#Creating Storage Account (boot diagnostics + serial console)
+let "randomIdentifier1=$RANDOM*$RANDOM" 
+az storage account create -n sc$randomIdentifier1 -g $rg -l $region1 --sku Standard_LRS -o none
+#Enabling boot diagnostics
+stguri1=$(az storage account show -n sc$randomIdentifier1 -g $rg --query primaryEndpoints.blob -o tsv)
+az vm boot-diagnostics enable --storage $stguri1 --ids $(az vm list -g $rg --query '[?location==`'$region1'`].{id:id}' -o tsv) -o none
+### Installing tools for networking connectivity validation such as traceroute, tcptraceroute, iperf and others (check link below for more details) 
+nettoolsuri="https://raw.githubusercontent.com/dmauser/azure-vm-net-tools/main/script/nettools.sh"
+for vm in `az vm list -g $rg --query "[?storageProfile.imageReference.offer=='UbuntuServer'].name" -o tsv`
+do
+ az vm extension set \
+ --resource-group $rg \
+ --vm-name $vm \
+ --name customScript \
+ --publisher Microsoft.Azure.Extensions \
+ --protected-settings "{\"fileUris\": [\"$nettoolsuri\"],\"commandToExecute\": \"./nettools.sh\"}" \
+ --no-wait
+done
+
+#PROVISIONING VNET FOR SDWAN NVA
+echo "Creating SDWAN VNET and Subnet"
+az network vnet create -n sdwan_vnet -g $rg --address-prefixes 10.1.0.0/24 --subnet-name sn_pub --subnet-prefixes 10.1.0.0/26 -o none
+az network vnet subnet create -g $rg -n sn_priv --vnet-name sdwan_vnet --address-prefix 10.1.0.64/26 -o none
+
+echo "Creating public IP for SDWAN NVAs"
+az network public-ip create -g $rg -n sdwan1_pip --sku standard --allocation-method static -o none
+az network public-ip create -g $rg -n sdwan2_pip --sku standard --allocation-method static -o none
+
+echo "Creating SDWAN NSG"
+az network nsg create -n sdwan_nsg -g $rg -o none
+az network nsg rule create --nsg-name sdwan_nsg -g $rg -n SSH --priority 1010 --destination-port-ranges 22 --access Allow --protocol Tcp -o none
+az network nsg rule create --nsg-name sdwan_nsg -g $rg -n VCMP --priority 1011 --destination-port-ranges 2426 --access Allow --protocol Udp -o none
+
+echo "Creating NICs"
+az network nic create -n sdwan1_nic_pub -g $rg --vnet-name sdwan_vnet --subnet sn_pub --public-ip-address sdwan1_pip \
+   --ip-forwarding true --network-security-group sdwan_nsg -o none
+az network nic create -n sdwan1_nic_private -g $rg --vnet-name sdwan_vnet --subnet sn_priv --ip-forwarding true -o none
+
+az network nic create -n sdwan2_nic_pub -g $rg --vnet-name sdwan_vnet --subnet sn_pub --public-ip-address sdwan2_pip \
+      --ip-forwarding true --network-security-group sdwan_nsg -o none
+az network nic create -n sdwan2_nic_private -g $rg --vnet-name sdwan_vnet --subnet sn_priv --ip-forwarding true -o none
+
+
+echo "pausing for 30s to allow for vwan creation"
+sleep 30
+
+echo Creating spoke connections to their respective hubs...
+# Spoke1 vnet connection
+az network vhub connection create -n spoke1conn --remote-vnet spoke1 -g $rg --vhub-name hub1 --no-wait
+# Spoke2 vnet connection 
+az network vhub connection create -n spoke2conn --remote-vnet spoke2 -g $rg --vhub-name hub1 --no-wait
+echo Creating sdwan connections to its hubs...
+az network vhub connection create -n sdwanconn --remote-vnet sdwan_vnet -g $rg --vhub-name hub1 --no-wait
+
+echo Validating sdwan hub connection state before deploying SDWAN NVAs
+prState=''
+while [[ $prState != 'Succeeded' ]];
+do
+    prState=$(az network vhub connection show -n sdwanconn --vhub-name hub1 -g $rg  --query 'provisioningState' -o tsv)
+    echo "vnet connection sdwanconn provisioningState="$prState
+    sleep 5
+done
+
+echo "pausing for 120s"
+sleep 120
+
+
+
+#Creating SDWAN NVAs
+
+cat <<EOF > $velo_cloudinit
+#cloud-config
+password: Velocloud123
+chpasswd: { expire: False }
+ssh_pwauth: True
+velocloud:
+ vce:
+   management_interface: false
+   vco: $vco
+   activation_code: $velo1_actkey
+   vco_ignore_cert_errors: $velo_ignore_cert_errors
+EOF
+velo_image_urn="${velo_publisher}:${velo_offer}:${velo_sku}:${velo_version}"
+echo "Accepting sdwan image terms and creating NVAs"
+az vm image terms accept --urn "$velo_image_urn" -o none
+echo "creating sdwan1"
+az vm create -n sdwan1 -g $rg -l $region1 --image "$velo_image_urn" --size $velo_vm_size \
+    --admin-username $username --admin-password $password --authentication-type password \
+    --nics sdwan1_nic_pub sdwan1_nic_private -o none \
+    --custom-data $velo_cloudinit --public-ip-sku Standard
+
+cat <<EOF > $velo_cloudinit2
+#cloud-config
+password: Velocloud123
+chpasswd: { expire: False }
+ssh_pwauth: True
+velocloud:
+ vce:
+   management_interface: false
+   vco: $vco
+   activation_code: $velo2_actkey
+   vco_ignore_cert_errors: $velo_ignore_cert_errors
+EOF
+velo_image_urn="${velo_publisher}:${velo_offer}:${velo_sku}:${velo_version}"
+echo "creating sdwan2"
+az vm image terms accept --urn "$velo_image_urn" -o none
+az vm create -n sdwan2 -g $rg -l $region1 --image "$velo_image_urn" --size $velo_vm_size \
+    --admin-username $username --admin-password $password --authentication-type password \
+    --nics sdwan2_nic_pub sdwan2_nic_private -o none \
+    --custom-data $velo_cloudinit2 --public-ip-sku Standard
+
+/// Only Run this after 1 hour , or peer might not be built.
+
+// I recommend spliting the script in 2 parts, as this script might just time out
+
+sleep 3600
+
+echo "build nva to vhub peering"
+ # Build SDWAN NVA to vHUB BGP Peering
+ az network vhub bgpconnection create --resource-group $rg \
+ --vhub-name hub1  --name sdwan1  --peer-asn 65011 \
+ --peer-ip $(az network nic show --name sdwan1_nic_private --resource-group $rg --query ipConfigurations[0].privateIpAddress -o tsv) \
+ --vhub-conn $(az network vhub connection show --name sdwanconn --resource-group $rg --vhub-name hub1 --query id -o tsv) \
+ --no-wait
+  # Build SDWAN NVA to vHUB BGP Peering
+ az network vhub bgpconnection create --resource-group $rg \
+ --vhub-name hub1  --name sdwan2  --peer-asn 65012 \
+ --peer-ip $(az network nic show --name sdwan2_nic_private --resource-group $rg --query ipConfigurations[0].privateIpAddress -o tsv) \
+ --vhub-conn $(az network vhub connection show --name sdwanconn --resource-group $rg --vhub-name hub1 --query id -o tsv) \
+ --no-wait
+
+echo "end of script"
