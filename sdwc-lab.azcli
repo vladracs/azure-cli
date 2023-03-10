@@ -1,30 +1,34 @@
 # Script build a small test lab for the new vmware sd-wan client
 
-rg=SDWC-CENTRALUS
-location=centralUS
+#to find a list of all regions use 
+# az account list-locations -o table
+
+
+rg=SDWC-WESTUS
+location=westus
 
 ####CUSTOMER DC VNET
 hub_vnet_name=hub
-hub_vnet_prefix=10.1.0.0/24
+hub_vnet_prefix=10.2.0.0/24
 #CC SUBNET
 hub_subnet_cc_name=sn-cc
-hub_subnet_cc_prefix=10.1.0.0/26
+hub_subnet_cc_prefix=10.2.0.0/26
 #SERVER SUBNET
 hub_subnet_srv_name=sn-srv
-hub_subnet_srv_prefix=10.1.0.64/26
+hub_subnet_srv_prefix=10.2.0.64/26
 
 #Network Security Group Name
 nsg_name=vms_nsg
 ####NPE
 npe_vnet_name=npe
-npe_vnet_prefix=10.1.11.0/24
+npe_vnet_prefix=10.2.11.0/24
 npe_subnet_name=sn-npe
-npe_subnet_prefix=10.1.11.0/26
+npe_subnet_prefix=10.2.11.0/26
 ###Client
 user_vnet_name=user
-user_vnet_prefix=10.1.12.0/24
+user_vnet_prefix=10.2.12.0/24
 user_subnet_name=sn-user
-user_subnet_prefix=10.1.12.0/26
+user_subnet_prefix=10.2.12.0/26
 ######## Deploying
 echo "Creating RG"
 az group create -n $rg -l $location -o none
@@ -53,55 +57,62 @@ az network nsg rule create --nsg-name $nsg_name -g $rg -n RDP --priority 1020 --
 az network nsg rule create --nsg-name $nsg_name -g $rg -n HTTPS-T --priority 1011 --destination-port-ranges 443 --access Allow --protocol Tcp -o none
 az network nsg rule create --nsg-name $nsg_name -g $rg -n HTTPS-U --priority 1012 --destination-port-ranges 443 --access Allow --protocol Udp -o none
 echo "Creating NICs"
-echo "CC NIC"
 az network nic create -n "cc_nic" -g $rg --vnet-name $hub_vnet_name --subnet $hub_subnet_cc_name --public-ip-address "cc-pip" \
    --ip-forwarding true --network-security-group $nsg_name -o none
 az network nic create -n "srv_nic" -g $rg --vnet-name $hub_vnet_name --subnet $hub_subnet_srv_name --public-ip-address "srv-pip" \
       --ip-forwarding false --network-security-group $nsg_name -o none
-az network nic create -n "npe-nic" -g $rg --vnet-name $npe_vnet_name --subnet $npe_subnet_name --public-ip-address "npe-pip" \
+az network nic create -n "npe_nic" -g $rg --vnet-name $npe_vnet_name --subnet $npe_subnet_name --public-ip-address "npe-pip" \
    --ip-forwarding false --network-security-group $nsg_name -o none
-az network nic create -n "user-nic" -g $rg --vnet-name $user_vnet_name --subnet $user_subnet_name --public-ip-address "user-pip" \
+az network nic create -n "user_nic" -g $rg --vnet-name $user_vnet_name --subnet $user_subnet_name --public-ip-address "user-pip" \
    --ip-forwarding false --network-security-group $nsg_name -o none
+
+
+cat <<EOF > cloud-init.txt
+#cloud-config
+package_upgrade: true
+packages:
+  - nginx
+runcmd:
+  - wget -o /tmp/wget.txt "https://packagecloud.io/install/repositories/Ananda/release/script.deb.sh"
+  - chmod +x /script.deb.sh
+  - bash /script.deb.sh
+  - apt-get install -y sdwan-client-service
+EOF
 
 echo "Creating SDWC CC Linux VM"
 az vm create \
-  --resource-group $rg \
-  --name sdwc-cc2 \
+  --resource-group SDWC-WESTUS \
+  --name sdwc-cc3 \
   --image UbuntuLTS \
   --admin-username azlinuxadmin \
   --admin-password azlinuxVMware1! \
-  --nics "cc-nic" \
+  --nics "cc_nic" \
+  --custom-data cloud-init.txt \
   --no-wait
+  
 echo "Creating SRV Linux VM"
 az vm create \
   --resource-group $rg \
-  --name srv2 \
+  --name srv3 \
   --image UbuntuLTS \
   --admin-username azlinuxadmin \
   --admin-password azlinuxVMware1! \
-  --nics "srv-nic" \
+  --nics "srv_nic" \
+  --custom-data cloud-init.txt \
   --no-wait
 echo "Creating SDWC NPE Linux VM"
 az vm create \
   --resource-group $rg \
-  --name sdwc-npe2 \
+  --name sdwc-npe3 \
   --image UbuntuLTS \
   --admin-username azlinuxadmin \
   --admin-password azlinuxVMware1! \
-  --nics "npe-nic" \
-  --no-wait
-echo "Creating SDWC User Linux VM"
-az vm create \
-  --resource-group $rg \
-  --name sdwc-user2 \
-  --image UbuntuLTS \
-  --admin-username azlinuxadmin \
-  --admin-password azlinuxVMware1! \
-  --nics "user-nic" \
+  --nics "npe_nic" \
+  --custom-data cloud-init.txt \
   --no-wait
 
 # grabing the ip of the CC
-privIP=$(az vm nic show -g $rg --vm-name sdwc-cc2 --nic cc-nic --query "ipConfigurations[0].privateIpAddress" -o tsv)
+privIP=$(az vm nic show -g $rg --vm-name sdwc-cc3 --nic cc-nic --query "ipConfigurations[0].privateIpAddress" -o tsv)
 
 #Create UDR to point traffic for the overlay network towards CC
 az network route-table route create \
