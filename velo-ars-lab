@@ -82,7 +82,7 @@ else
 fi
 cat <<EOF > $velo_cloudinit
 #cloud-config
-password: Velocloud123
+password: use_your_password
 chpasswd: { expire: False }
 ssh_pwauth: True
 velocloud:
