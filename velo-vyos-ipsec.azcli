@@ -59,7 +59,7 @@ az network nic create -n "$hub_velo1_nic_public_name" -g $rg --vnet-name $hub_vn
 
 cat <<EOF > $velo_cloudinit
 #cloud-config
-password: Velocloud123
+password: use_your_password
 chpasswd: { expire: False }
 ssh_pwauth: True
 velocloud:
@@ -74,7 +74,7 @@ velo_image_urn="${velo_publisher}:${velo_offer}:${velo_sku}:${velo_version}"
 echo "Accepting image terms and creating VM..."
 az vm image terms accept --urn "$velo_image_urn" -o none
 az vm create -n $hub_velo1_name -g $rg -l $location --image "$velo_image_urn" --size $velo_vm_size \
-    --admin-username "vceuser" --admin-password "Velocloud123" --authentication-type password \
+    --admin-username "vceuser" --admin-password "use_your_password" --authentication-type password \
     --nics "$hub_velo1_nic_public_name" -o none \
     --custom-data $velo_cloudinit
 
@@ -110,6 +110,6 @@ az network nic create -n "$hub_nva1_nic_untrust_name" -g $rg --vnet-name $hub_vn
 echo "Accepting image terms and creating NVAs..."
 az vm image terms accept --urn "$nva_image_urn" -o none
 az vm create -n $hub_nva1_name -g $rg -l $location --image "$nva_image_urn" --size $nva_vm_size \
-    --admin-username "vyosadmin" --admin-password "vyosVMware1!" --authentication-type password \
+    --admin-username "vyosadmin" --admin-password "use_your_password" --authentication-type password \
     --nics "$hub_nva1_nic_untrust_name" -o none --public-ip-sku Standard \
     --plan-name $nva_plan_name --plan-product $nva_plan_product --plan-publisher $nva_plan_publisher
