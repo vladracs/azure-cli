@@ -32,7 +32,7 @@ bgp_network2="192.168.0.0/16"
 
 #USER-PWD FOR ALL VMs (not using ssh keys - not considered best practices)
 username=azadmin
-password="azVelocloud123!Vmware1!" #Please change your password
+password="use_your_pwd" #Please change your password
 
 #VMware SDWAN NVA
 velo_publisher=vmware-inc
@@ -142,7 +142,7 @@ sleep 120
 
 cat <<EOF > $velo_cloudinit
 #cloud-config
-password: Velocloud123
+password: use_your_pwd
 chpasswd: { expire: False }
 ssh_pwauth: True
 velocloud:
