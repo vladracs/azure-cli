@@ -1,0 +1,92 @@
+# Sample Azure CLI script that provisions a VMware SD-WAN Edge in Azure Greenfield
+#
+#
+# 2nic VCE version 4.2.1 (nic1 private, nic2 public)
+#
+# Not to be considered as best practices in using VMware VCO API Meant to be used in Lab environments - Please test it and use at your own risk
+# 
+# Please note that VMWare does not guarantee functionality of this sample and provide it - AS IS - i.e.
+# while I am glad to answer questions about this script usage and behavior generally speaking, VMware cannot and do not specifically support these scripts
+#
+# Variables
+velo1_token=<VCE_ACTIVATION_KEY>
+vco=vcoXXX.velocloud.net
+rg=velocloud
+location=westeurope
+zone=3
+hub_vnet_name=hub
+hub_vnet_prefix=10.1.0.0/24
+hub_velo_subnet_public_name=velopub
+hub_velo_subnet_public_prefix=10.1.0.0/26
+hub_velo_subnet_private_name=velopriv
+hub_velo_subnet_private_prefix=10.1.0.64/26
+hub_velo1_name=velo1
+hub_velo1_nic_public_name=velo1nic1
+hub_velo1_nic_public2_name=velo1nic2
+hub_velo1_nic_private_name=velo1nic3
+hub_velo1_pip_name=velo1pip
+hub_velo1_pip2_name=velo1pip2
+
+velo_plan_name=vmware_sdwan_4x
+velo_plan_product=sol-42222-bbj
+velo_plan_publisher=vmware-inc
+velo_publisher=vmware-inc
+velo_offer=sol-42222-bbj
+velo_sku=vmware_sdwan_4x
+velo_version=latest
+
+velo_ignore_cert_errors='true'
+velo_nsg_name=velonsg
+velo_cloudinit=/tmp/velocloudinit.txt
+#make sure to change the sizing for your needs
+velo_vm_size=Standard_B2ms
+sshkey=$(cat ~/.ssh/id_rsa.pub)
+keyvault_name=myvault
+velo1_token_secret_name=velocloudtoken1
+velo_vco_secret_name=velovco
+
+# Create RG and VNets
+echo "Creating RG and VNets..."
+az group create -n $rg -l $location -o none
+az network vnet create -n $hub_vnet_name -g $rg --address-prefixes $hub_vnet_prefix --subnet-name $hub_velo_subnet_public_name --subnet-prefixes $hub_velo_subnet_public_prefix -o none
+az network vnet subnet create -g $rg -n $hub_velo_subnet_private_name --vnet-name $hub_vnet_name --address-prefix $hub_velo_subnet_private_prefix -o none
+
+# Create VeloCloud NVA
+echo "Creating public IP"
+az network public-ip create -g $rg -n $hub_velo1_pip_name --sku standard --allocation-method static -o none --zone $zone
+az network public-ip create -g $rg -n $hub_velo1_pip2_name --sku standard --allocation-method static -o none --zone $zone
+echo "Creating NSG "
+az network nsg create -n $velo_nsg_name -g $rg -o none
+az network nsg rule create --nsg-name $velo_nsg_name -g $rg -n VCMP --priority 1000 --destination-port-ranges 2426 --access Allow --protocol Udp -o none
+az network nsg rule create --nsg-name $velo_nsg_name -g $rg -n SSH --priority 1010 --destination-port-ranges 22 --access Allow --protocol Tcp -o none
+echo "Creating NICs"
+az network nic create -n "$hub_velo1_nic_public_name" -g $rg --vnet-name $hub_vnet_name --subnet $hub_velo_subnet_public_name --public-ip-address "$hub_velo1_pip_name" --ip-forwarding --network-security-group $velo_nsg_name -o none
+az network nic create -n "$hub_velo1_nic_public2_name" -g $rg --vnet-name $hub_vnet_name --subnet $hub_velo_subnet_public_name --public-ip-address "$hub_velo1_pip2_name" --ip-forwarding --network-security-group $velo_nsg_name -o none
+az network nic create -n "$hub_velo1_nic_private_name" -g $rg --vnet-name $hub_vnet_name --subnet $hub_velo_subnet_private_name --ip-forwarding --network-security-group $velo_nsg_name -o none
+
+if [[ -n "$velo1_token" ]] && [[ -n "$vco" ]]
+then
+    echo "VeloCloud Activation Key and VCO successfully retrieved from Azure Key Vault $keyvault_name"
+else
+    echo "VeloCloud Activation Key and VCO could NOT be retrieved from Azure Key Vault $keyvault_name"
+fi
+cat <<EOF > $velo_cloudinit
+#cloud-config
+password: <use_your_pwd>
+chpasswd: { expire: False }
+ssh_pwauth: True
+velocloud:
+ vce:
+   management_interface: false
+   vco: $vco
+   activation_code: $velo1_token
+   vco_ignore_cert_errors: $velo_ignore_cert_errors
+EOF
+velo_image_urn="${velo_publisher}:${velo_offer}:${velo_sku}:${velo_version}"
+echo "Accepting image terms and creating VM..."
+az vm image terms accept --urn "$velo_image_urn" -o none
+az vm create -n $hub_velo1_name -g $rg -l $location --image "$velo_image_urn" --size $velo_vm_size \
+    --admin-username "azure-user" --admin-password "Velocloud123" --authentication-type password --generate-ssh-keys \
+    --nics "$hub_velo1_nic_public_name" "$hub_velo1_nic_public2_name" "$hub_velo1_nic_private_name" -o none \
+    --zone $zone --custom-data $velo_cloudinit \
+    --plan-name $velo_plan_name --plan-product $velo_plan_product --plan-publisher $velo_plan_publisher
