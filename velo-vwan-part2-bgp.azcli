@@ -17,13 +17,7 @@ region1=westeurope
 #VWAN 
 vwanname=vwan-nvabgp
 hub1name=hub1
-#SPOKE LINUX SIZE
-vmsize=Standard_DS1_v2
-#### SDWAN nva parameters
-# Variables
-velo1_actkey=MNGN-AAAB-bbb-cccd
-velo2_actkey=-AAAB-bbb-cccd
-vco=vco12-usvi1.velocloud.net
+
 #Specific SDWAN BGP settings
 vce1bgp=65011 # Set ASN
 bgp_network1="192.168.0.0/16"
