@@ -163,7 +163,7 @@ az vm create -n sdwan1 -g $rg -l $region1 --image "$velo_image_urn" --size $velo
 
 cat <<EOF > $velo_cloudinit2
 #cloud-config
-password: Velocloud123
+password: use_your_pwd
 chpasswd: { expire: False }
 ssh_pwauth: True
 velocloud:
